@@ -97,10 +97,11 @@ async function load() {
 }
 
 function render() {
-  $('count').textContent = '未分類 ' + state.items.length + '件';
+  $('count').textContent = '未分類 ' + state.items.reduce((a, i) => a + (i.count || 1), 0) + '件';
   $('held').textContent = state.held ? '保留 ' + state.held + '件' : '';
   const it = state.items[0];
   if (!it) { $('main').replaceChildren(el('div', { class: 'center' }, '未分類はありません 🎉')); return; }
+  if (it.group) return renderGroup(it);
 
   const memo = it.merchant ? null : el('input', { class: 'memo', placeholder: '店名(任意)', id: 'memo' });
   const card = el('div', { class: 'card' },
@@ -127,6 +128,49 @@ function render() {
   }
   card.append(el('button', { class: 'later', onclick: later }, 'あとで'));
   $('main').replaceChildren(card);
+}
+
+function renderGroup(it) {
+  const card = el('div', { class: 'card' },
+    el('div', { class: 'date' }, '連続決済 ' + it.date),
+    el('div', { class: 'amount' }, '¥' + it.total.toLocaleString()),
+    el('div', { class: 'merchant' }, it.count + '件: ' + it.children.map(c => c.amount).join(' / ')),
+    el('div', { class: 'pay' }, '1時間以内に続けた決済'));
+  if (!state.showGrid) {
+    card.append(el('div', { class: 'q' }, '「' + it.suggest + '」ですか?(' + it.count + '件まとめて)'),
+      el('div', { class: 'row' },
+        el('button', { class: 'yes', onclick: () => decideGroup(it.suggest) }, 'はい'),
+        el('button', { class: 'no', onclick: () => { state.showGrid = true; render(); } }, 'いいえ')));
+  } else {
+    card.append(el('div', { class: 'q' }, 'まとめて入れるジャンル'));
+    ['消費', '資金移動(支出)'].forEach(g => {
+      card.append(el('div', { class: 'grp' }, g),
+        el('div', { class: 'grid' }, state.cats.filter(c => c.group === g)
+          .map(c => el('button', { onclick: () => decideGroup(c.name) }, c.name))));
+    });
+  }
+  card.append(
+    el('button', { class: 'later', onclick: splitGroup }, '1件ずつ確認する'),
+    el('button', { class: 'later', onclick: laterGroup }, 'まとめてあとで'));
+  $('main').replaceChildren(card);
+}
+
+function splitGroup() {
+  const g = state.items.shift();
+  state.items.unshift(...g.children);
+  state.showGrid = false; render();
+}
+
+async function decideGroup(category) {
+  const g = advance();
+  try { await api({ action: 'confirmMany', ids: g.ids, category }); }
+  catch (e) { restore(g, '保存失敗: ' + e.message); }
+}
+
+async function laterGroup() {
+  const g = advance(); state.held += g.count; render();
+  try { await api({ action: 'holdMany', ids: g.ids }); }
+  catch (e) { state.held -= g.count; restore(g, '保留に失敗: ' + e.message); }
 }
 
 // 先に画面を進めて、裏で送信(失敗したら元に戻す)
