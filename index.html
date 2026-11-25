@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>家計簿</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--text:#1c1c1e;--sub:#6b6b70;--accent:#2f6fed;--line:#dcdde1;--ng:#e9eaee}
+@media(prefers-color-scheme:dark){:root{--bg:#111214;--card:#1c1d20;--text:#f2f2f4;--sub:#9a9aa0;--accent:#5b8cff;--line:#2e2f34;--ng:#2a2b30}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Hiragino Sans",sans-serif;padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom)}
+header{display:flex;justify-content:space-between;align-items:center;padding:16px 0 8px;font-size:14px;color:var(--sub)}
+.card{background:var(--card);border-radius:20px;padding:22px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+.date{color:var(--sub);font-size:14px}
+.amount{font-size:40px;font-weight:700;margin:6px 0}
+.merchant{font-size:18px;word-break:break-all}
+.pay{color:var(--sub);font-size:13px;margin-top:4px}
+.warn{color:#d9822b;font-size:12px;margin-top:6px}
+input.memo{width:100%;margin-top:12px;padding:12px;font-size:16px;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--text)}
+.q{margin:22px 0 12px;font-size:17px;font-weight:600}
+.row{display:flex;gap:10px}
+button{font:inherit;border:0;border-radius:14px;padding:16px 10px;cursor:pointer;color:var(--text);background:var(--ng)}
+button.yes{background:var(--accent);color:#fff;flex:2;font-weight:700}
+button.no{flex:1}
+.later{display:block;width:100%;margin-top:10px;background:none;color:var(--sub);font-size:14px}
+.grp{font-size:12px;color:var(--sub);margin:14px 0 6px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid button{padding:14px 6px;font-size:15px}
+.center{text-align:center;color:var(--sub);padding:80px 0}
+#toast{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom) + 16px);background:#c0392b;color:#fff;padding:12px;border-radius:12px;display:none}
+footer{text-align:center;padding:20px;font-size:12px}
+footer a{color:var(--sub)}
+</style>
+</head>
+<body>
+<header><span id="count"></span><span id="held"></span></header>
+<main id="main"></main>
+<footer><a href="#" id="reset">接続設定をやり直す</a></footer>
+<div id="toast"></div>
+<script>
+const LS = window.localStorage;
+let state = { items: [], cats: [], held: 0, showGrid: false };
+const $ = id => document.getElementById(id);
+
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  Object.entries(attrs || {}).forEach(([k, v]) => {
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e[k] = v;
+  });
+  kids.flat().forEach(k => e.append(k));
+  return e;
+}
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  setTimeout(() => (t.style.display = 'none'), 3500);
+}
+
+async function api(body) {
+  // text/plain で送るとCORSのプリフライトが不要になる(GAS向けの定石)
+  const r = await fetch(LS.getItem('apiUrl'), {
+    method: 'POST',
+    body: JSON.stringify({ token: LS.getItem('token'), ...body }),
+  });
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error);
+  return j.data;
+}
+
+function ensureSetup() {
+  if (!LS.getItem('apiUrl')) LS.setItem('apiUrl', (prompt('GASのウェブアプリURL(…/exec)') || '').trim());
+  if (!LS.getItem('token')) LS.setItem('token', (prompt('合言葉(API_TOKEN)') || '').trim());
+}
+
+async function load() {
+  $('main').replaceChildren(el('div', { class: 'center' }, '読み込み中…'));
+  try {
+    const d = await api({ action: 'list' });
+    state = { items: d.items, cats: d.categories, held: d.held, showGrid: false };
+    render();
+  } catch (e) {
+    $('main').replaceChildren(el('div', { class: 'center' }, '読み込み失敗: ' + e.message));
+  }
+}
+
+function render() {
+  $('count').textContent = '未分類 ' + state.items.length + '件';
+  $('held').textContent = state.held ? '保留 ' + state.held + '件' : '';
+  const it = state.items[0];
+  if (!it) { $('main').replaceChildren(el('div', { class: 'center' }, '未分類はありません 🎉')); return; }
+
+  const memo = it.merchant ? null : el('input', { class: 'memo', placeholder: '店名(任意)', id: 'memo' });
+  const card = el('div', { class: 'card' },
+    el('div', { class: 'date' }, it.date),
+    el('div', { class: 'amount' }, '¥' + it.amount.toLocaleString()),
+    el('div', { class: 'merchant' }, it.merchant || '(店名なし)'),
+    el('div', { class: 'pay' }, it.pay || ''),
+    it.check ? el('div', { class: 'warn' }, '⚠ 要確認の取引です') : '',
+    memo || '');
+
+  if (it.suggest && !state.showGrid) {
+    card.append(
+      el('div', { class: 'q' }, '「' + it.suggest + '」ですか?'),
+      el('div', { class: 'row' },
+        el('button', { class: 'yes', onclick: () => decide(it.suggest) }, 'はい'),
+        el('button', { class: 'no', onclick: () => { state.showGrid = true; render(); } }, 'いいえ')));
+  } else {
+    card.append(el('div', { class: 'q' }, 'ジャンルを選んでください'));
+    ['消費', '資金移動(支出)'].forEach(g => {
+      card.append(el('div', { class: 'grp' }, g),
+        el('div', { class: 'grid' }, state.cats.filter(c => c.group === g)
+          .map(c => el('button', { onclick: () => decide(c.name) }, c.name))));
+    });
+  }
+  card.append(el('button', { class: 'later', onclick: later }, 'あとで'));
+  $('main').replaceChildren(card);
+}
+
+// 先に画面を進めて、裏で送信(失敗したら元に戻す)
+function advance() { const it = state.items.shift(); state.showGrid = false; render(); return it; }
+function restore(it, msg) { state.items.unshift(it); render(); toast(msg); }
+
+async function decide(category) {
+  const memo = $('memo') ? $('memo').value : '';
+  const it = advance();
+  try { await api({ action: 'confirm', id: it.id, category, memo }); }
+  catch (e) { restore(it, '保存失敗: ' + e.message); }
+}
+
+async function later() {
+  const it = advance(); state.held++; render();
+  try { await api({ action: 'hold', id: it.id }); }
+  catch (e) { state.held--; restore(it, '保留に失敗: ' + e.message); }
+}
+
+$('reset').addEventListener('click', e => {
+  e.preventDefault(); LS.removeItem('apiUrl'); LS.removeItem('token'); ensureSetup(); load();
+});
+ensureSetup();
+load();
+</script>
+</body>
+</html>
