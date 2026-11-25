@@ -69,9 +69,20 @@ async function api(body) {
   return j.data;
 }
 
-function ensureSetup() {
-  if (!LS.getItem('apiUrl')) LS.setItem('apiUrl', (prompt('GASのウェブアプリURL(…/exec)') || '').trim());
-  if (!LS.getItem('token')) LS.setItem('token', (prompt('合言葉(API_TOKEN)') || '').trim());
+function setupForm() {
+  return new Promise(resolve => {
+    const u = el('input', { class: 'memo', placeholder: 'GASのURL(…/exec)' });
+    const t = el('input', { class: 'memo', type: 'password', placeholder: '合言葉(API_TOKEN)' });
+    const b = el('button', { class: 'yes', style: 'width:100%;margin-top:14px', onclick: () => {
+      if (!u.value.trim() || !t.value.trim()) return;
+      LS.setItem('apiUrl', u.value.trim()); LS.setItem('token', t.value.trim()); resolve();
+    } }, '保存して開始');
+    $('main').replaceChildren(el('div', { class: 'card' }, el('div', { class: 'q' }, '接続設定'), u, t, b));
+  });
+}
+
+async function ensureSetup() {
+  if (!LS.getItem('apiUrl') || !LS.getItem('token')) await setupForm();
 }
 
 async function load() {
@@ -135,11 +146,10 @@ async function later() {
   catch (e) { state.held--; restore(it, '保留に失敗: ' + e.message); }
 }
 
-$('reset').addEventListener('click', e => {
-  e.preventDefault(); LS.removeItem('apiUrl'); LS.removeItem('token'); ensureSetup(); load();
+$('reset').addEventListener('click', async e => {
+  e.preventDefault(); LS.removeItem('apiUrl'); LS.removeItem('token'); await ensureSetup(); load();
 });
-ensureSetup();
-load();
+ensureSetup().then(load);
 </script>
 </body>
 </html>
